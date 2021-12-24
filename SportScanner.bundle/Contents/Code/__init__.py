@@ -1,4 +1,5 @@
 import re, time, os, datetime
+import calendar
 from pprint import pprint
 from difflib import SequenceMatcher
 import urllib2
@@ -262,6 +263,23 @@ class SportScannerAgent(Agent.TV_Shows):
                         except:
                             pass
 
+                        # Try the same thing again with the subsequent day (sometimes UTC time puts the game in the next day)
+                        if matched_episode is None:
+                            Log("Trying subsequent day search with original filename {0}".format(filename))
+                            originalDateStr = re.search(r'\d{4}-\d{2}-\d{2}', filename).group(0)
+                            originalDate = datetime.datetime.strptime(originalDateStr, '%Y-%m-%d')
+                            subsequentDate = originalDate + datetime.timedelta(days=1)
+                            subsequentDateFilename = re.sub(r'\d{4}-\d{2}-\d{2}', subsequentDate.strftime('%Y-%m-%d'), filename)
+                            Log("Trying subsequent day search with modified filename {0}".format(filename))
+
+                            try:
+                                url = "{0}searchfilename.php?e={1}".format(SPORTSDB_API, subsequentDateFilename)
+                                results = JSON.ObjectFromString(GetResultFromNetwork(url, True))
+                                matched_episode = results['event'][0]
+                                Log("SS: Matched {0} using filename search with 'subsequent date'".format(matched_episode['strEvent']))
+                            except:
+                                pass    
+
                         # Then try and generate a filename that might work
                         # Take the full name of the league, add on the date of the event
                         # Then chuck the title on the end and hope the home/away ordering is correct for this sport
@@ -343,7 +361,19 @@ class SportScannerAgent(Agent.TV_Shows):
                         if matched_episode.get('strAwayTeam') is not None and matched_episode.get('strHomeTeam') is not None:
                             extra_details = "{0} vs. {1}\n".format(matched_episode['strHomeTeam'], matched_episode['strAwayTeam'])
                         if matched_episode.get('dateEvent') is not None and matched_episode.get('strTime') is not None:
-                            extra_details = "{0}Played on {1} at {2}\n".format(extra_details, matched_episode['dateEvent'], matched_episode['strTime'])
+                            # Convert the date/time to local
+                            # First, parse it
+                            utc_dt = datetime.datetime.strptime("{0} {1}".format(matched_episode['dateEvent'], matched_episode['strTime']), '%Y-%m-%d %H:%M:%S')
+
+                            # Then convert it (https://stackoverflow.com/a/13287083/4206279)
+                            timestamp = calendar.timegm(utc_dt.timetuple())
+                            local_dt = datetime.datetime.fromtimestamp(timestamp)
+                            local_dt.replace(microsecond=utc_dt.microsecond)
+                            
+                            # Format it nicely
+                            local_dt = local_dt.strftime('%Y-%m-%d %I:%M:%S %p')
+                            
+                            extra_details = "{0}Played on {1}\n".format(extra_details, local_dt)
                         if matched_episode.get('strCircuit') is not None:
                             extra_details = "{0}Race venue: {1}".format(extra_details, matched_episode['strCircuit'])
                             if matched_episode.get('strCountry') is not None:
